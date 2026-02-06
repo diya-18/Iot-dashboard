@@ -28,7 +28,7 @@ The goal of this project was to design and develop a complete IoT management pla
 
 **Deployment**
 - Frontend → Vercel(https://iot-dashboard-lovat.vercel.app/login)
-- Backend → Renderhttps:(//iot-dashboard-backend-zjgi.onrender.com)
+- Backend → Renderhttps:(https://iot-dashboard-backend-zjgi.onrender.com/)
 - Database → MongoDB Atlas
 
 # Run locally
