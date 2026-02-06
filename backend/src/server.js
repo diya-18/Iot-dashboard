@@ -51,16 +51,22 @@ app.use((req, res, next) => {
 });
 
 // MongoDB Connection
-console.log("Mongo URI from ENV:", process.env.MONGODB_URI);
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  ssl: true,
-  tls: true,
-})
-.then(() => console.log("✅ Connected to MongoDB Atlas"))
-.catch(err => console.error("❌ MongoDB connection error:", err));
+console.log("Mongo URI from ENV:", process.env.MONGODB_URI);const mongoose = require("mongoose");
+const { MongoMemoryServer } = require("mongodb-memory-server");
 
+async function connectDB() {
+  try {
+    const mongoServer = await MongoMemoryServer.create();
+    const uri = mongoServer.getUri();
+
+    await mongoose.connect(uri);
+    console.log("✅ Connected to in-memory MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB connection error:", err);
+  }
+}
+
+connectDB();
 
 // Initialize default admin user
 // In backend/src/server.js, locate the initializeDefaultAdmin function
