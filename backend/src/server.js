@@ -177,14 +177,12 @@ mqttClient.on('error', (error) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`\n🚀 Server is running on port ${PORT}`);
-  console.log(`📊 Dashboard API: http://localhost:${PORT}`);
-  console.log(`🔌 Socket.io ready for connections`);
-  console.log(`📡 MQTT: ${mqttClient.connected ? 'Connected' : 'Connecting...'}`);
-  console.log(`\nEnvironment: ${process.env.NODE_ENV || 'development'}\n`);
+const PORT = process.env.PORT || 10000;
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
+
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
