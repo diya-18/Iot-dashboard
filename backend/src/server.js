@@ -52,10 +52,15 @@ app.use((req, res, next) => {
 
 // MongoDB Connection
 console.log("Mongo URI from ENV:", process.env.MONGODB_URI);
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch(err => console.error("❌ MongoDB connection error:", err));
-  
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  ssl: true,
+  tls: true,
+})
+.then(() => console.log("✅ Connected to MongoDB Atlas"))
+.catch(err => console.error("❌ MongoDB connection error:", err));
+
 
 // Initialize default admin user
 // In backend/src/server.js, locate the initializeDefaultAdmin function

@@ -1,7 +1,8 @@
 // frontend/lib/api.js
 import Cookies from 'js-cookie';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+
 
 export async function fetchAPI(endpoint, options = {}) {
   const token = Cookies.get('token');
