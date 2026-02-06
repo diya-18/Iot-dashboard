@@ -8,6 +8,15 @@ const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://broker.hivemq.com
 const MQTT_PORT = process.env.MQTT_PORT || 1883;
 const CLIENT_ID = process.env.MQTT_CLIENT_ID || `iot_backend_${Math.random().toString(16).slice(2, 8)}`;
 
+// 🔐 Unique namespace to avoid public broker noise
+const BASE_TOPIC = "diya/iot-dashboard";
+
+const TOPICS = [
+  `${BASE_TOPIC}/devices/+/telemetry`,
+  `${BASE_TOPIC}/devices/+/status`,
+  `${BASE_TOPIC}/devices/register`
+];
+
 // Connect to MQTT Broker
 const client = mqtt.connect(MQTT_BROKER_URL, {
   port: MQTT_PORT,
@@ -17,35 +26,39 @@ const client = mqtt.connect(MQTT_BROKER_URL, {
   connectTimeout: 30000,
 });
 
-// Topic patterns
-const TOPICS = [
-  'iot/devices/+/telemetry',
-  'iot/devices/+/status',
-  'iot/devices/register'
-];
-
 client.on('connect', () => {
   console.log('✅ MQTT Client connected');
-  
+
   TOPICS.forEach(topic => {
     client.subscribe(topic, (err) => {
-      if (err) {
-        console.error(`❌ Failed to subscribe to ${topic}:`, err);
-      } else {
-        console.log(`📡 Subscribed to: ${topic}`);
-      }
+      if (err) console.error(`❌ Failed to subscribe to ${topic}:`, err);
+      else console.log(`📡 Subscribed to: ${topic}`);
     });
   });
 });
 
 client.on('message', async (topic, message) => {
+  // 🛡️ SAFE JSON parsing (prevents crash from random broker messages)
+  let payload;
   try {
-    const payload = JSON.parse(message.toString());
-    console.log(`📨 Received on ${topic}:`, payload);
+    payload = JSON.parse(message.toString());
+  } catch {
+    console.log("⚠️ Ignored non-JSON MQTT message:", message.toString());
+    return;
+  }
 
+  try {
     const topicParts = topic.split('/');
-    const messageType = topicParts[3];
-    const serialNumber = topicParts[2];
+    // topic format: diya/iot-dashboard/devices/<serial>/<type>
+    const serialNumber = topicParts[3];
+    const messageType = topicParts[4];
+
+    console.log(`📨 MQTT ${messageType} from ${serialNumber}`);
+
+    if (topic === `${BASE_TOPIC}/devices/register`) {
+      await handleRegistration(payload);
+      return;
+    }
 
     switch (messageType) {
       case 'telemetry':
@@ -54,11 +67,8 @@ client.on('message', async (topic, message) => {
       case 'status':
         await handleStatus(serialNumber, payload);
         break;
-      default:
-        if (topic === 'iot/devices/register') {
-          await handleRegistration(payload);
-        }
     }
+
   } catch (error) {
     console.error('❌ Error processing MQTT message:', error.message);
   }
@@ -66,68 +76,33 @@ client.on('message', async (topic, message) => {
 
 async function handleTelemetry(serialNumber, payload) {
   try {
-    // Validate serial number format
-    if (!Device.validateSerialNumber(serialNumber)) {
-      console.error(`❌ Invalid serial number format: ${serialNumber}`);
-      return;
-    }
+    if (!Device.validateSerialNumber(serialNumber)) return;
 
-    // Find device
     const device = await Device.findOne({ serialNumber });
-    
-    if (!device) {
-      console.error(`❌ Device not found: ${serialNumber}`);
-      return;
-    }
+    if (!device || !device.enabled) return;
 
-    if (!device.enabled) {
-      console.warn(`⚠️  Device disabled: ${serialNumber}`);
-      return;
-    }
-
-    // Validate payload structure
     const { timestamp, ...telemetryData } = payload;
-    
-    if (!telemetryData || Object.keys(telemetryData).length === 0) {
-      console.error('❌ Empty telemetry data');
-      return;
-    }
+    if (!Object.keys(telemetryData).length) return;
 
-    // Get device parameters for validation
     const parameters = await Parameter.getDeviceParameters(device._id);
-    
-    // Validate each parameter value
+
     for (const param of parameters) {
       const value = telemetryData[param.name];
-      
-      if (value !== undefined && value !== null) {
-        const validation = param.validateValue(value);
-        if (!validation.valid) {
-          console.warn(`⚠️  Validation failed for ${param.name}: ${validation.error}`);
-        }
-      }
+      if (value !== undefined) param.validateValue(value);
     }
 
-    // Store telemetry
     const telemetry = await Telemetry.storeTelemetry({
       deviceId: device._id,
       serialNumber,
       timestamp: timestamp || new Date(),
       telemetryData,
       quality: 'good',
-      metadata: {
-        source: 'mqtt',
-        mqttTopic: `iot/devices/${serialNumber}/telemetry`
-      }
+      metadata: { source: 'mqtt', mqttTopic: topic }
     });
 
-    // Update device last seen
     await device.updateLastSeen();
-
-    // Check alert thresholds
     await alertEngine.checkThresholds(device._id, serialNumber, telemetryData);
 
-    // Emit to Socket.io clients
     if (global.io) {
       global.io.emit('telemetry', {
         serialNumber,
@@ -136,93 +111,60 @@ async function handleTelemetry(serialNumber, payload) {
       });
     }
 
-    console.log(`✅ Telemetry stored for device: ${serialNumber}`);
+    console.log(`✅ Telemetry stored for ${serialNumber}`);
+
   } catch (error) {
-    console.error('❌ Error handling telemetry:', error.message);
+    console.error('❌ Telemetry error:', error.message);
   }
 }
 
 async function handleStatus(serialNumber, payload) {
   try {
-    if (!Device.validateSerialNumber(serialNumber)) {
-      return;
-    }
+    if (!Device.validateSerialNumber(serialNumber)) return;
 
     const device = await Device.findOne({ serialNumber });
-    
-    if (device) {
-      device.status = payload.status || 'online';
-      device.lastSeen = new Date();
-      await device.save();
-      
-      if (global.io) {
-        global.io.emit('deviceStatus', {
-          serialNumber,
-          status: device.status,
-          lastSeen: device.lastSeen
-        });
-      }
-      
-      console.log(`✅ Status updated: ${serialNumber} -> ${device.status}`);
+    if (!device) return;
+
+    device.status = payload.status || 'online';
+    device.lastSeen = new Date();
+    await device.save();
+
+    if (global.io) {
+      global.io.emit('deviceStatus', {
+        serialNumber,
+        status: device.status,
+        lastSeen: device.lastSeen
+      });
     }
+
+    console.log(`✅ Status updated: ${serialNumber} -> ${device.status}`);
+
   } catch (error) {
-    console.error('❌ Error handling status:', error.message);
+    console.error('❌ Status error:', error.message);
   }
 }
 
 async function handleRegistration(payload) {
   try {
-    const { serialNumber, name, deviceType, location, metadata } = payload;
-    
-    // Validate serial number
-    if (!Device.validateSerialNumber(serialNumber)) {
-      console.error(`❌ Invalid serial number in registration: ${serialNumber}`);
-      return;
-    }
+    const { serialNumber } = payload;
+    if (!Device.validateSerialNumber(serialNumber)) return;
 
-    // Check if device exists
-    let device = await Device.findOne({ serialNumber });
-    
-    if (!device) {
-      // Device doesn't exist - auto-registration not allowed in DRD
-      console.warn(`⚠️  Auto-registration attempt for: ${serialNumber}`);
-      console.warn('Devices must be manually registered by admin');
-      return;
-    }
+    const device = await Device.findOne({ serialNumber });
+    if (!device) return;
 
-    // Device exists, just update status
     device.status = 'online';
     device.lastSeen = new Date();
     await device.save();
-    
-    console.log(`✅ Device came online: ${serialNumber}`);
+
+    console.log(`✅ Device online: ${serialNumber}`);
+
   } catch (error) {
-    console.error('❌ Error handling registration:', error.message);
+    console.error('❌ Registration error:', error.message);
   }
 }
 
-function publishMessage(topic, message) {
-  const payload = typeof message === 'string' ? message : JSON.stringify(message);
-  client.publish(topic, payload, { qos: 1 }, (err) => {
-    if (err) {
-      console.error(`❌ Failed to publish to ${topic}:`, err);
-    } else {
-      console.log(`✅ Published to ${topic}`);
-    }
-  });
-}
-
-client.on('error', (error) => {
-  console.error('❌ MQTT Client error:', error.message);
-});
-
-client.on('reconnect', () => {
-  console.log('🔄 MQTT Client reconnecting...');
-});
-
-client.on('close', () => {
-  console.log('🔌 MQTT Client disconnected');
-});
+client.on('error', err => console.error('❌ MQTT Error:', err.message));
+client.on('reconnect', () => console.log('🔄 MQTT reconnecting...'));
+client.on('close', () => console.log('🔌 MQTT disconnected'));
 
 module.exports = client;
-module.exports.publishMessage = publishMessage;
