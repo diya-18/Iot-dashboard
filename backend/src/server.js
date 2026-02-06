@@ -3,6 +3,8 @@ const http = require('http');
 const cors = require('cors');
 const socketIo = require('socket.io');
 const mongoose = require('mongoose');
+const { MongoMemoryServer } = require('mongodb-memory-server');
+
 if (process.env.NODE_ENV !== "production") {
   require("dotenv").config();
 }
@@ -21,26 +23,22 @@ const mqttClient = require('./mqtt/client');
 
 // Import models
 const User = require('./models/User');
+
 const app = express();
 const server = http.createServer(app);
 
 // Socket.io setup
 const io = socketIo(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: "*",
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
-
-// Make io globally accessible
 global.io = io;
 
 // Middleware
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
-}));
+app.use(cors({ origin: "*", credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -50,10 +48,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// MongoDB Connection
-console.log("Mongo URI from ENV:", process.env.MONGODB_URI);const mongoose = require("mongoose");
-const { MongoMemoryServer } = require("mongodb-memory-server");
 
+// 🔥 In-memory MongoDB (works everywhere including Render)
 async function connectDB() {
   try {
     const mongoServer = await MongoMemoryServer.create();
@@ -61,50 +57,34 @@ async function connectDB() {
 
     await mongoose.connect(uri);
     console.log("✅ Connected to in-memory MongoDB");
+
+    // Create default admin after DB connects
+    await initializeDefaultAdmin();
+
   } catch (err) {
     console.error("❌ MongoDB connection error:", err);
   }
 }
-
 connectDB();
 
-// Initialize default admin user
-// In backend/src/server.js, locate the initializeDefaultAdmin function
 
+// Create default admin automatically
 async function initializeDefaultAdmin() {
   try {
-    const userCount = await User.countDocuments();
-    
-    if (userCount === 0) {
+    const existingAdmin = await User.findOne({ email: 'admin@iot.com' });
+
+    if (!existingAdmin) {
       const adminUser = new User({
-        email: process.env.DEFAULT_ADMIN_EMAIL || 'admin@iot.com',
-        password: process.env.DEFAULT_ADMIN_PASSWORD || 'Admin@123',
+        email: 'admin@iot.com',
+        password: 'Admin@123',
         name: 'System Administrator',
         role: 'admin'
       });
-      
+
       adminUser.setAdminPermissions();
       await adminUser.save();
-      
-      console.log('✅ Default admin user created');
-      console.log(`📧 Email: ${adminUser.email}`);
-      console.log(`🔑 Password: ${process.env.DEFAULT_ADMIN_PASSWORD || 'Admin@123'}`);
-      console.log('⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!');
-    } else {
-      // Add a section to update the existing admin user with a fresh hash
-      const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@iot.com';
-      const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'Admin@123';
-      const existingAdmin = await User.findOne({ email: adminEmail });
 
-      if (existingAdmin && !(await existingAdmin.comparePassword(defaultPassword))) {
-        // If the password doesn't match the default, update it using a bypass method
-        existingAdmin.password = defaultPassword;
-        // Use an update method that doesn't trigger 'pre.save' if necessary,
-        // or ensure your pre-save hook is marked as modified:
-        existingAdmin.isModified('password'); 
-        await existingAdmin.save();
-        console.log('⚠️ Existing admin password was incorrect; updated with default password.');
-      }
+      console.log('✅ Default admin created → admin@iot.com / Admin@123');
     }
   } catch (error) {
     console.error('Error creating default admin:', error);
@@ -116,17 +96,7 @@ async function initializeDefaultAdmin() {
 app.get('/', (req, res) => {
   res.json({
     message: 'IoT Dashboard API - DRD Compliant',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      auth: '/api/auth',
-      users: '/api/users',
-      devices: '/api/devices',
-      parameters: '/api/parameters',
-      telemetry: '/api/telemetry',
-      alerts: '/api/alerts',
-      analytics: '/api/analytics'
-    }
+    status: 'running'
   });
 });
 
@@ -142,64 +112,18 @@ app.use('/api/analytics', analyticsRoutes);
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
     mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     mqtt: mqttClient.connected ? 'connected' : 'disconnected'
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-// Error handler
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({ 
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
-});
-
-// Socket.io connection handling
+// Socket.io
 io.on('connection', (socket) => {
   console.log(`🔌 Client connected: ${socket.id}`);
-  
-  require('./socket/handler')(socket, io);
-  
-  socket.on('disconnect', () => {
-    console.log(`🔌 Client disconnected: ${socket.id}`);
-  });
-});
-
-// MQTT connection events
-mqttClient.on('connect', () => {
-  console.log('✅ MQTT Client connected to broker');
-});
-
-mqttClient.on('error', (error) => {
-  console.error('❌ MQTT Client error:', error.message);
 });
 
 // Start server
 const PORT = process.env.PORT || 10000;
-
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
-
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, closing server...');
-  server.close(() => {
-    mongoose.connection.close();
-    mqttClient.end();
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
-
-module.exports = { app, io };
