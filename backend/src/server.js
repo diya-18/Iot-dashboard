@@ -3,7 +3,9 @@ const http = require('http');
 const cors = require('cors');
 const socketIo = require('socket.io');
 const mongoose = require('mongoose');
-require('dotenv').config();
+if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config();
+}
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -49,17 +51,11 @@ app.use((req, res, next) => {
 });
 
 // MongoDB Connection
+console.log("Mongo URI from ENV:", process.env.MONGODB_URI);
 mongoose.connect(process.env.MONGODB_URI)
-.then(async () => {
-  console.log('✅ Connected to MongoDB successfully');
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
   
-  // Create default admin if no users exist
-  await initializeDefaultAdmin();
-})
-.catch((err) => {
-  console.error('❌ MongoDB connection error:', err.message);
-  process.exit(1);
-});
 
 // Initialize default admin user
 // In backend/src/server.js, locate the initializeDefaultAdmin function
