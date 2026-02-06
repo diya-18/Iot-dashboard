@@ -27,8 +27,8 @@ The goal of this project was to design and develop a complete IoT management pla
 - **IoT:** MQTT (HiveMQ) + Python Simulator
 
 **Deployment**
-- Frontend → Vercel
-- Backend → Railway
+- Frontend → Vercel(https://iot-dashboard-lovat.vercel.app/login)
+- Backend → Renderhttps:(//iot-dashboard-backend-zjgi.onrender.com)
 - Database → MongoDB Atlas
 
 # Run locally
